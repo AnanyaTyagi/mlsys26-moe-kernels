@@ -218,3 +218,17 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# IDE
+.idea/
+*.iml
+
+# venv
+.venv/
+
+# macOS
+.DS_Store
+
+# python cache
+__pycache__/
+*.pyc
