@@ -97,7 +97,6 @@ def run_benchmark(solution_json: str, config_dict: dict | None = None) -> dict:
             entry = {"status": trace.evaluation.status.value, "solution": trace.solution}
             print("EVAL RAW:", trace.evaluation)
             print("EVAL DICT:", getattr(trace.evaluation, "__dict__", None))
-            # ✅ add this
             if getattr(trace.evaluation, "message", None):
                 entry["message"] = trace.evaluation.message
             if getattr(trace.evaluation, "error", None):
