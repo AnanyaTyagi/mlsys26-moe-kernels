@@ -1,32 +1,55 @@
 """
-TVM FFI Bindings Template for CUDA Kernels (Starter-kit compatible).
+TVM FFI binding for FlashInfer-Bench (CUDA solution).
 
-Entry point: binding.py::kernel
-
-This kernel definition expects:
-- routing_logits: float32[seq_len, 256]
-- routing_bias: bfloat16[256]
-- hidden_states: float8_e4m3fn[seq_len, 7168]
-- hidden_states_scale: float32[56, seq_len]
-- gemm1_weights: float8_e4m3fn[32, 4096, 7168]
-- gemm1_weights_scale: float32[32, 32, 56]
-- gemm2_weights: float8_e4m3fn[32, 7168, 2048]
-- gemm2_weights_scale: float32[32, 56, 16]
-- local_expert_offset: int32 scalar
-- routed_scaling_factor: float32 scalar
-
-Output:
-- output: bfloat16[seq_len, 7168]
+Strategy (baseline correctness):
+- Convert inputs to torch.Tensor via DLPack
+- Call flashinfer.fused_moe.trtllm_fp8_block_scale_moe (baseline op)
+- Return bfloat16 output, converting back to TVM NDArray if needed
 """
+
+from __future__ import annotations
 
 from tvm.ffi import register_func
 
-# NOTE: In most starter-kit setups, tensors passed to this function are TVM NDArrays.
-# You can operate on them via TVM APIs (or convert/interop), but for a "today" runnable
-# submission we provide a minimal output allocation path.
+import torch
+from torch.utils.dlpack import from_dlpack as torch_from_dlpack
+from torch.utils.dlpack import to_dlpack as torch_to_dlpack
 
-import tvm
-from tvm import nd
+import flashinfer
+import flashinfer.fused_moe  # ensure submodule is loaded
+
+
+def _is_torch(x) -> bool:
+    return isinstance(x, torch.Tensor)
+
+
+def _to_torch(x) -> torch.Tensor:
+    """Convert TVM NDArray / torch.Tensor -> torch.Tensor (zero-copy when possible)."""
+    if _is_torch(x):
+        return x
+    if hasattr(x, "to_dlpack"):
+        return torch_from_dlpack(x.to_dlpack())
+    if hasattr(x, "__dlpack__"):
+        return torch_from_dlpack(x.__dlpack__())
+    raise TypeError(f"Unsupported input type for DLPack conversion: {type(x)}")
+
+
+def _to_original_container(y_torch: torch.Tensor, like):
+    """Return torch tensor or TVM NDArray depending on what `like` is."""
+    if _is_torch(like):
+        return y_torch
+    import tvm
+    return tvm.nd.from_dlpack(torch_to_dlpack(y_torch))
+
+
+def _scalar_to_py(v, pytype):
+    if isinstance(v, (int, float)):
+        return pytype(v)
+    if _is_torch(v):
+        return pytype(v.item())
+    if hasattr(v, "numpy"):
+        return pytype(v.numpy().item())
+    raise TypeError(f"Unsupported scalar type: {type(v)}")
 
 
 @register_func("flashinfer.kernel")
@@ -42,30 +65,43 @@ def kernel(
     local_expert_offset,
     routed_scaling_factor,
 ):
-    """
-    Runnable placeholder implementation.
+    # Convert to torch
+    routing_logits_t = _to_torch(routing_logits)
+    routing_bias_t = _to_torch(routing_bias) if routing_bias is not None else None
+    hidden_states_t = _to_torch(hidden_states)
+    hidden_states_scale_t = _to_torch(hidden_states_scale)
+    gemm1_weights_t = _to_torch(gemm1_weights)
+    gemm1_weights_scale_t = _to_torch(gemm1_weights_scale)
+    gemm2_weights_t = _to_torch(gemm2_weights)
+    gemm2_weights_scale_t = _to_torch(gemm2_weights_scale)
 
-    Today goal: be executable + match output contract.
-    Tomorrow goal: replace the body with actual CUDA kernel launch / library call.
+    local_expert_offset_py = _scalar_to_py(local_expert_offset, int)
+    routed_scaling_factor_py = _scalar_to_py(routed_scaling_factor, float)
 
-    Returns:
-      output: tvm.nd.NDArray, dtype=bfloat16, shape=(seq_len, 7168)
-    """
+    out_t = flashinfer.fused_moe.trtllm_fp8_block_scale_moe(
+        routing_logits=routing_logits_t,
+        routing_bias=routing_bias_t,
+        hidden_states=hidden_states_t,
+        hidden_states_scale=hidden_states_scale_t,
+        gemm1_weights=gemm1_weights_t,
+        gemm1_weights_scale=gemm1_weights_scale_t,
+        gemm2_weights=gemm2_weights_t,
+        gemm2_weights_scale=gemm2_weights_scale_t,
+        num_experts=256,
+        top_k=8,
+        n_group=8,
+        topk_group=4,
+        intermediate_size=2048,
+        local_expert_offset=local_expert_offset_py,
+        local_num_experts=32,
+        routed_scaling_factor=routed_scaling_factor_py,
+        routing_method_type=0,
+        use_shuffled_weight=False,
+        weight_layout=0,
+        do_finalize=True,
+    )
 
-    # Infer seq_len from routing_logits: [seq_len, 256]
-    # (Could also read from hidden_states: [seq_len, 7168])
-    seq_len = int(routing_logits.shape[0])
+    if out_t.dtype != torch.bfloat16:
+        out_t = out_t.to(torch.bfloat16)
 
-    # Allocate output on same device as inputs (important)
-    dev = routing_logits.device
-
-    # Create bfloat16 output
-    out = nd.empty((seq_len, 7168), dtype="bfloat16", device=dev)
-
-    # --- Minimal safe fallback ---
-    # For now we output zeros. This will be "correct type/shape" but NOT numerically correct.
-    # Depending on evaluation rules, this may fail correctness checks.
-    # If you want a better fallback, see the "better fallback" note below.
-    out.copyfrom(nd.array(tvm.runtime.ndarray.zeros((seq_len, 7168), "bfloat16"), device=dev))
-
-    return out
+    return _to_original_container(out_t, routing_logits)

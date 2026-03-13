@@ -5,4 +5,7 @@ author = "KFusion"
 
 [build]
 language = "cuda"
+binding = "tvm-ffi"
 entry_point = "binding.py::kernel"
+target_hardware = ["cuda"]
+destination_passing_style = false
