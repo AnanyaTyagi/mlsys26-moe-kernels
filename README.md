@@ -41,7 +41,8 @@ This project improves performance by:
 
 ### 1. Install Dependencies
 
-```bash
+
+bash
 conda create -n fi-bench python=3.12
 conda activate fi-bench
 pip install flashinfer-bench modal
@@ -53,4 +54,4 @@ export FIB_DATASET_PATH=/path/to/flashinfer-trace
 
 ### 3. Run Benchmark
 
-modal run scripts/run_modal.py
+modal run scripts/run_modal.py fix this file
