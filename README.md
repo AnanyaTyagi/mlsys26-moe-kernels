@@ -45,27 +45,12 @@ This project improves performance by:
 conda create -n fi-bench python=3.12
 conda activate fi-bench
 pip install flashinfer-bench modal
-2. Download Dataset
+
+### 2. Download Dataset
 git lfs install
 git clone https://huggingface.co/datasets/flashinfer-ai/mlsys26-contest
 export FIB_DATASET_PATH=/path/to/flashinfer-trace
-3. Run Benchmark
+
+### 3. Run Benchmark
+
 modal run scripts/run_modal.py
-Key Idea
-
-MoE models activate only a few experts per token, but baseline implementations process all experts.
-
-This work improves efficiency by:
-
-detecting active experts using vectorization
-reducing synchronization overhead
-avoiding unnecessary memory allocation
-Results
-Metric	Reference	Optimized
-Latency	10.88 ms	2.81 ms
-Speedup	1.0×	3.88×
-Accuracy	✔	✔
-Notes
-Optimization focuses on single-GPU local computation
-Multi-GPU communication is handled by the framework
-Performance is memory-bound
